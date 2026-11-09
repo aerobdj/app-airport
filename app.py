@@ -3,6 +3,7 @@ from streamlit_drawable_canvas import st_canvas
 from PIL import Image
 import json
 import os
+import base64
 import streamlit.components.v1 as components
 import pydeck as pdk
 
@@ -25,6 +26,14 @@ menu = st.sidebar.radio(
     "Pilih Menu:",
     ["1. Upload Layout", "2. Plotting Area", "3. Koneksi Data Tenant", "4. Preview (2D/3D)"]
 )
+
+# Helper: Konversi Gambar ke Base64 (Mencegah Gambar Pecah)
+def get_image_base64(image_path):
+    if os.path.exists(image_path):
+        with open(image_path, "rb") as img_file:
+            encoded = base64.b64encode(img_file.read()).decode()
+            return f"data:image/png;base64,{encoded}"
+    return ""
 
 # Helper: Warna Blok Berdasarkan Status Tenant
 def get_block_styles(block_id, tenant_data):
@@ -53,7 +62,7 @@ if menu == "1. Upload Layout":
 
 
 # ---------------------------------------------------------
-# MODUL 2: PLOTTING AREA (SATU-SATUNYA TEMPAT DRAWING)
+# MODUL 2: PLOTTING AREA
 # ---------------------------------------------------------
 elif menu == "2. Plotting Area":
     st.header("2. Plotting Area Tenant")
@@ -101,7 +110,7 @@ elif menu == "2. Plotting Area":
 
 
 # ---------------------------------------------------------
-# MODUL 3: KONEKSI DATA TENANT (FULL LAYOUT + PAN/ZOOM + DIRECT CLICK)
+# MODUL 3: KONEKSI DATA TENANT (BEBAS ZOOM OUT + BASE64 IMAGE + DIRECT POPUP)
 # ---------------------------------------------------------
 elif menu == "3. Koneksi Data Tenant":
     st.header("3. Hubungkan Blok dengan Data Tenant")
@@ -112,6 +121,8 @@ elif menu == "3. Koneksi Data Tenant":
         st.warning("⚠️ File layout atau data plotting belum lengkap. Selesaikan Modul 1 dan 2 terlebih dahulu.")
     else:
         bg_image = Image.open(img_path)
+        img_base64 = get_image_base64(img_path)
+        
         with open(shapes_path, "r") as f:
             shapes = json.load(f)
             
@@ -122,10 +133,13 @@ elif menu == "3. Koneksi Data Tenant":
                 tenant_data = json.load(f)
 
         show_bg_m3 = st.checkbox("🖼️ Tampilkan Gambar Denah Asli (Layout Background)", value=True, key="bg_m3")
-        st.caption("💡 **Gunakan Scroll Mouse untuk Zoom In/Out & Drag untuk Menggeser Denah. KLIK langsung pada blok untuk membuka Form Edit.**")
-        st.caption("Keterangan Warna: ⚪ Abu-abu = Belum Diisi | 🟡 Kuning = Terisi (Occupied) | 🔵 Biru = Kosong (Vacant)")
+        st.caption("💡 **Scroll Mouse untuk Zoom In/Out (Zoom out bebas melihat semua area) & Drag untuk menggeser. KLIK blok untuk membuka Form.**")
 
-        # Generate SVG elements
+        # Cek Query Param dari Klik HTML
+        query_params = st.query_params
+        active_block_m3 = query_params.get("select_m3", None)
+
+        # SVG Elements
         svg_rects = ""
         for idx, shape in enumerate(shapes):
             block_id = f"BLK-{idx+1}"
@@ -137,7 +151,7 @@ elif menu == "3. Koneksi Data Tenant":
             height = shape.get("height", 50) * shape.get("scaleY", 1)
             
             svg_rects += f"""
-            <g class="block-group" onclick="selectBlock('{block_id}')">
+            <g class="block-group" onclick="clickBlock('{block_id}')">
                 <rect x="{left}" y="{top}" width="{width}" height="{height}" 
                       fill="{fill}" stroke="{stroke}" stroke-width="2" rx="4" class="block-rect" />
                 <text x="{left + width/2}" y="{top + height/2}" fill="#ffffff" font-size="13" font-weight="bold" 
@@ -145,9 +159,9 @@ elif menu == "3. Koneksi Data Tenant":
             </g>
             """
 
-        bg_img_html = f'<img src="uploads/layout_current.png" style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;" />' if show_bg_m3 else ''
+        bg_img_html = f'<img src="{img_base64}" style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;" />' if show_bg_m3 else ''
 
-        # HTML Viewer dengan Panzoom (Zoom/Drag Layout Paten)
+        # HTML Viewer dengan Panzoom (Disesuaikan minScale=0.1 & contain='none')
         panzoom_html = f"""
         <script src="https://unpkg.com/@panzoom/panzoom@4.5.1/dist/panzoom.min.js"></script>
         <div id="container" style="width: 100%; height: 650px; border: 2px solid #e5e7eb; border-radius: 12px; overflow: hidden; background: #f8fafc; cursor: grab;">
@@ -160,30 +174,23 @@ elif menu == "3. Koneksi Data Tenant":
         </div>
         <style>
             .block-group {{ cursor: pointer; transition: all 0.2s; }}
-            .block-rect:hover {{ fill: rgba(239, 68, 68, 0.8) !important; stroke: #EF4444 !important; filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.8)); }}
+            .block-rect:hover {{ fill: rgba(239, 68, 68, 0.85) !important; stroke: #EF4444 !important; filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.8)); }}
         </style>
         <script>
             const elem = document.getElementById('panzoom-elem');
-            const panzoom = Panzoom(elem, {{ maxScale: 5, minScale: 0.5, contain: 'outside' }});
+            const panzoom = Panzoom(elem, {{ maxScale: 5, minScale: 0.1, contain: 'none' }});
             elem.parentElement.addEventListener('wheel', panzoom.zoomWithWheel);
 
-            function selectBlock(id) {{
-                const input = window.parent.document.querySelector('input[aria-label="hidden_block_input_m3"]');
-                if (input) {{
-                    input.value = id;
-                    input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                }}
+            function clickBlock(id) {{
+                window.top.location.href = window.top.location.pathname + '?select_m3=' + id;
             }}
         </script>
         """
         
         components.html(panzoom_html, height=670)
 
-        # Hidden Input untuk Bridge Event Klik dari HTML ke Streamlit
-        clicked_block_m3 = st.text_input("hidden_block_input_m3", label_visibility="collapsed", key="m3_block_trigger")
-
-        # POP-UP FORM AUTOMATIS SAAT BLOK DIKLIK
-        @st.dialog(f"📝 Form Input Data Tenant: {clicked_block_m3}")
+        # DIALOG POP-UP FORM INPUT AUTOMATIS SAAT DIKLIK
+        @st.dialog(f"📝 Form Input Data Tenant: {active_block_m3}")
         def open_tenant_form_direct(block_id):
             current_info = tenant_data.get(block_id, {})
             
@@ -223,15 +230,18 @@ elif menu == "3. Koneksi Data Tenant":
                 
                 with open(tenant_db_path, "w") as f:
                     json.dump(tenant_data, f, indent=4)
+                
+                # Reset Query Param
+                st.query_params.clear()
                 st.success(f"Data untuk {block_id} berhasil disimpan!")
                 st.rerun()
 
-        if clicked_block_m3:
-            open_tenant_form_direct(clicked_block_m3)
+        if active_block_m3:
+            open_tenant_form_direct(active_block_m3)
 
 
 # ---------------------------------------------------------
-# MODUL 4: PREVIEW INTERAKTIF (FULL LAYOUT + TOOLTIP POPUP + 3D EXTRUSION)
+# MODUL 4: PREVIEW INTERAKTIF
 # ---------------------------------------------------------
 elif menu == "4. Preview (2D/3D)":
     st.header("4. Dashboard Preview Spatial Tenant Bandara")
@@ -243,6 +253,8 @@ elif menu == "4. Preview (2D/3D)":
         st.warning("⚠️ File layout atau data plotting belum lengkap. Selesaikan Modul 1, 2, dan 3 terlebih dahulu.")
     else:
         bg_image = Image.open(img_path)
+        img_base64 = get_image_base64(img_path)
+
         with open(shapes_path, "r") as f:
             shapes = json.load(f)
         
@@ -251,7 +263,6 @@ elif menu == "4. Preview (2D/3D)":
             with open(tenant_db_path, "r") as f:
                 tenant_data = json.load(f)
 
-        # b. Tombol 2D/3D & Hide Layout
         col1, col2 = st.columns([2, 2])
         with col1:
             view_mode = st.radio("📐 Mode Tampilan Visual:", ["Mode 2D (Flat Floorplan)", "Mode 3D (Building Extrusion)"], horizontal=True)
@@ -260,11 +271,11 @@ elif menu == "4. Preview (2D/3D)":
 
         st.markdown("---")
 
-        # ---------------------------------------------------------
-        # MODE 2D PREVIEW (FULL LAYOUT + PAN/ZOOM + TOOLTIP POPUP)
-        # ---------------------------------------------------------
         if view_mode == "Mode 2D (Flat Floorplan)":
-            st.caption("💡 **Gunakan Scroll Mouse untuk Zoom & Drag untuk Geser Layout. KLIK pada blok untuk melihat pop-up tooltip detail rincian tenant.**")
+            st.caption("💡 **Scroll Mouse untuk Zoom In/Out & Drag untuk Menggeser Layout. KLIK blok untuk melihat Pop-up Tooltip rincian tenant.**")
+
+            query_params = st.query_params
+            active_block_m4 = query_params.get("select_m4", None)
 
             svg_rects_m4 = ""
             for idx, shape in enumerate(shapes):
@@ -285,7 +296,7 @@ elif menu == "4. Preview (2D/3D)":
                 </g>
                 """
 
-            bg_img_m4_html = f'<img src="uploads/layout_current.png" style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;" />' if show_bg_m4 else ''
+            bg_img_m4_html = f'<img src="{img_base64}" style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;" />' if show_bg_m4 else ''
 
             panzoom_m4_html = f"""
             <script src="https://unpkg.com/@panzoom/panzoom@4.5.1/dist/panzoom.min.js"></script>
@@ -303,25 +314,19 @@ elif menu == "4. Preview (2D/3D)":
             </style>
             <script>
                 const elem4 = document.getElementById('panzoom-elem-m4');
-                const panzoom4 = Panzoom(elem4, {{ maxScale: 5, minScale: 0.5, contain: 'outside' }});
+                const panzoom4 = Panzoom(elem4, {{ maxScale: 5, minScale: 0.1, contain: 'none' }});
                 elem4.parentElement.addEventListener('wheel', panzoom4.zoomWithWheel);
 
                 function inspectBlock(id) {{
-                    const input = window.parent.document.querySelector('input[aria-label="hidden_block_input_m4"]');
-                    if (input) {{
-                        input.value = id;
-                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    }}
+                    window.top.location.href = window.top.location.pathname + '?select_m4=' + id;
                 }}
             </script>
             """
             
             components.html(panzoom_m4_html, height=720)
 
-            clicked_block_m4 = st.text_input("hidden_block_input_m4", label_visibility="collapsed", key="m4_block_trigger")
-
             # TOOLTIP POPUP DETAIL BLOK (ROUNDED RECTANGLE)
-            @st.dialog(f"📊 Tooltip Laporan Detail Spatial: {clicked_block_m4}")
+            @st.dialog(f"📊 Tooltip Laporan Detail Spatial: {active_block_m4}")
             def open_detail_tooltip(block_id):
                 detail = tenant_data.get(block_id)
                 
@@ -351,12 +356,13 @@ elif menu == "4. Preview (2D/3D)":
                     st.write(f"📐 **Luas Area:** {detail.get('luas')}")
                     st.write(f"💵 **Target Base Rent:** {detail.get('base_rent')}")
 
-            if clicked_block_m4:
-                open_detail_tooltip(clicked_block_m4)
+                if st.button("Tutup Pop-up", use_container_width=True):
+                    st.query_params.clear()
+                    st.rerun()
 
-        # ---------------------------------------------------------
-        # MODE 3D PREVIEW (TANPA BACKGROUND + THICK EXTRUSION)
-        # ---------------------------------------------------------
+            if active_block_m4:
+                open_detail_tooltip(active_block_m4)
+
         else:
             st.subheader("🧊 Tampilan Modellling 3D Interaktif (Thick Extrusion)")
             st.caption("Tanpa gambar latar belakang denah. Ketebalan ketinggian blok 3D ditambah secara dinamis.")
@@ -377,15 +383,14 @@ elif menu == "4. Preview (2D/3D)":
 
                 coords = [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]
 
-                # Skema warna & Ditambah Ketinggian Ekstrusi (+100 s.d +150 poin ketebalan)
                 if not info:
                     color = [156, 163, 175, 200]
-                    elevation = 80  # Tebal dasar
+                    elevation = 80
                 elif status == "Occupied":
-                    color = [234, 179, 8, 220]  # Kuning
-                    elevation = 160 # Ekstrusi lebih tinggi/tebal
+                    color = [234, 179, 8, 220]
+                    elevation = 160
                 else:
-                    color = [59, 130, 246, 220]  # Biru
+                    color = [59, 130, 246, 220]
                     elevation = 110
 
                 polygon_data.append({

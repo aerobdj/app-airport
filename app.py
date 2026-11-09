@@ -4,7 +4,6 @@ from PIL import Image
 import json
 import os
 import base64
-import streamlit.components.v1 as components
 import pydeck as pdk
 
 # Konfigurasi Halaman Web Full Width
@@ -27,7 +26,7 @@ menu = st.sidebar.radio(
     ["1. Upload Layout", "2. Plotting Area", "3. Koneksi Data Tenant", "4. Preview (2D/3D)"]
 )
 
-# Helper: Konversi Gambar ke Base64 (Mencegah Gambar Pecah)
+# Helper: Konversi Gambar ke Base64
 def get_image_base64(image_path):
     if os.path.exists(image_path):
         with open(image_path, "rb") as img_file:
@@ -35,15 +34,15 @@ def get_image_base64(image_path):
             return f"data:image/png;base64,{encoded}"
     return ""
 
-# Helper: Warna Blok Berdasarkan Status Tenant
-def get_block_styles(block_id, tenant_data):
+# Helper: Warna & Label Status
+def get_block_status_info(block_id, tenant_data):
     info = tenant_data.get(block_id)
     if not info:
-        return "rgba(156, 163, 175, 0.5)", "#6B7280"  # Abu-abu (Belum Diisi)
+        return "rgba(156, 163, 175, 0.5)", "#6B7280", "Belum Diisi"
     elif info.get("status") == "Occupied":
-        return "rgba(234, 179, 8, 0.65)", "#EAB308"   # Kuning (Terisi)
+        return "rgba(234, 179, 8, 0.65)", "#EAB308", f"Terisi: {info.get('nama_tenant', '')}"
     else:
-        return "rgba(59, 130, 246, 0.65)", "#3B82F6"  # Biru (Kosong/Vacant)
+        return "rgba(59, 130, 246, 0.65)", "#3B82F6", "Vacant (Kosong)"
 
 
 # ---------------------------------------------------------
@@ -110,7 +109,7 @@ elif menu == "2. Plotting Area":
 
 
 # ---------------------------------------------------------
-# MODUL 3: KONEKSI DATA TENANT (BEBAS ZOOM OUT + BASE64 IMAGE + DIRECT POPUP)
+# MODUL 3: KONEKSI DATA TENANT (NATIVE STREAMLIT DIALOG)
 # ---------------------------------------------------------
 elif menu == "3. Koneksi Data Tenant":
     st.header("3. Hubungkan Blok dengan Data Tenant")
@@ -132,66 +131,12 @@ elif menu == "3. Koneksi Data Tenant":
             with open(tenant_db_path, "r") as f:
                 tenant_data = json.load(f)
 
-        show_bg_m3 = st.checkbox("🖼️ Tampilkan Gambar Denah Asli (Layout Background)", value=True, key="bg_m3")
-        st.caption("💡 **Scroll Mouse untuk Zoom In/Out (Zoom out bebas melihat semua area) & Drag untuk menggeser. KLIK blok untuk membuka Form.**")
-
-        # Cek Query Param dari Klik HTML
-        query_params = st.query_params
-        active_block_m3 = query_params.get("select_m3", None)
-
-        # SVG Elements
-        svg_rects = ""
-        for idx, shape in enumerate(shapes):
-            block_id = f"BLK-{idx+1}"
-            fill, stroke = get_block_styles(block_id, tenant_data)
-            
-            left = shape.get("left", 0)
-            top = shape.get("top", 0)
-            width = shape.get("width", 50) * shape.get("scaleX", 1)
-            height = shape.get("height", 50) * shape.get("scaleY", 1)
-            
-            svg_rects += f"""
-            <g class="block-group" onclick="clickBlock('{block_id}')">
-                <rect x="{left}" y="{top}" width="{width}" height="{height}" 
-                      fill="{fill}" stroke="{stroke}" stroke-width="2" rx="4" class="block-rect" />
-                <text x="{left + width/2}" y="{top + height/2}" fill="#ffffff" font-size="13" font-weight="bold" 
-                      text-anchor="middle" dominant-baseline="middle" style="pointer-events: none;">{block_id}</text>
-            </g>
-            """
-
-        bg_img_html = f'<img src="{img_base64}" style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;" />' if show_bg_m3 else ''
-
-        # HTML Viewer dengan Panzoom (Disesuaikan minScale=0.1 & contain='none')
-        panzoom_html = f"""
-        <script src="https://unpkg.com/@panzoom/panzoom@4.5.1/dist/panzoom.min.js"></script>
-        <div id="container" style="width: 100%; height: 650px; border: 2px solid #e5e7eb; border-radius: 12px; overflow: hidden; background: #f8fafc; cursor: grab;">
-            <div id="panzoom-elem" style="width: {bg_image.width}px; height: {bg_image.height}px; position: relative;">
-                {bg_img_html}
-                <svg style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;">
-                    {svg_rects}
-                </svg>
-            </div>
-        </div>
-        <style>
-            .block-group {{ cursor: pointer; transition: all 0.2s; }}
-            .block-rect:hover {{ fill: rgba(239, 68, 68, 0.85) !important; stroke: #EF4444 !important; filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.8)); }}
-        </style>
-        <script>
-            const elem = document.getElementById('panzoom-elem');
-            const panzoom = Panzoom(elem, {{ maxScale: 5, minScale: 0.1, contain: 'none' }});
-            elem.parentElement.addEventListener('wheel', panzoom.zoomWithWheel);
-
-            function clickBlock(id) {{
-                window.top.location.href = window.top.location.pathname + '?select_m3=' + id;
-            }}
-        </script>
-        """
+        st.caption("Keterangan Warna Status: ⚪ Abu-abu = Belum Diisi | 🟡 Kuning = Terisi (Occupied) | 🔵 Biru = Kosong (Vacant)")
         
-        components.html(panzoom_html, height=670)
-
-        # DIALOG POP-UP FORM INPUT AUTOMATIS SAAT DIKLIK
-        @st.dialog(f"📝 Form Input Data Tenant: {active_block_m3}")
-        def open_tenant_form_direct(block_id):
+        # Pop-Up Form Input Tenant (Modal)
+        @st.dialog("📝 Form Input Data Tenant")
+        def open_tenant_form_dialog(block_id):
+            st.markdown(f"### Mengedit Blok: `{block_id}`")
             current_info = tenant_data.get(block_id, {})
             
             status = st.selectbox("Status Blok", ["Kosong (Vacant)", "Terisi (Occupied)"], 
@@ -231,17 +176,57 @@ elif menu == "3. Koneksi Data Tenant":
                 with open(tenant_db_path, "w") as f:
                     json.dump(tenant_data, f, indent=4)
                 
-                # Reset Query Param
-                st.query_params.clear()
                 st.success(f"Data untuk {block_id} berhasil disimpan!")
                 st.rerun()
 
-        if active_block_m3:
-            open_tenant_form_direct(active_block_m3)
+        # Grid Tombol Interaktif Blok
+        st.markdown("### 📍 Pilih Blok Ruangan:")
+        cols = st.columns(4)
+        for idx, shape in enumerate(shapes):
+            block_id = f"BLK-{idx+1}"
+            fill, stroke, status_text = get_block_status_info(block_id, tenant_data)
+            
+            with cols[idx % 4]:
+                if st.button(f"📌 {block_id}\n({status_text})", key=f"btn_m3_{block_id}", use_container_width=True):
+                    open_tenant_form_dialog(block_id)
+
+        st.markdown("---")
+        show_bg_m3 = st.checkbox("🖼️ Tampilkan Gambar Denah Asli (Visual Preview)", value=True, key="bg_m3")
+
+        # Layout Viewer
+        svg_rects = ""
+        for idx, shape in enumerate(shapes):
+            block_id = f"BLK-{idx+1}"
+            fill, stroke, _ = get_block_status_info(block_id, tenant_data)
+            left = shape.get("left", 0)
+            top = shape.get("top", 0)
+            width = shape.get("width", 50) * shape.get("scaleX", 1)
+            height = shape.get("height", 50) * shape.get("scaleY", 1)
+            
+            svg_rects += f"""
+            <rect x="{left}" y="{top}" width="{width}" height="{height}" 
+                  fill="{fill}" stroke="{stroke}" stroke-width="2" rx="4" />
+            <text x="{left + width/2}" y="{top + height/2}" fill="#ffffff" font-size="13" font-weight="bold" 
+                  text-anchor="middle" dominant-baseline="middle">{block_id}</text>
+            """
+
+        bg_img_html = f'<img src="{img_base64}" style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;" />' if show_bg_m3 else ''
+
+        html_preview = f"""
+        <div style="width: 100%; height: 600px; border: 2px solid #e5e7eb; border-radius: 12px; overflow: auto; background: #f8fafc; position: relative;">
+            <div style="width: {bg_image.width}px; height: {bg_image.height}px; position: relative;">
+                {bg_img_html}
+                <svg style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;">
+                    {svg_rects}
+                </svg>
+            </div>
+        </div>
+        """
+        st.components.v1.html(html_preview, height=620)
 
 
 # ---------------------------------------------------------
-# MODUL 4: PREVIEW INTERAKTIF
+# MODUL 4: PREVIEW INTERAKTIF (NATIVE DIALOG TOOLTIP)
 # ---------------------------------------------------------
 elif menu == "4. Preview (2D/3D)":
     st.header("4. Dashboard Preview Spatial Tenant Bandara")
@@ -272,79 +257,16 @@ elif menu == "4. Preview (2D/3D)":
         st.markdown("---")
 
         if view_mode == "Mode 2D (Flat Floorplan)":
-            st.caption("💡 **Scroll Mouse untuk Zoom In/Out & Drag untuk Menggeser Layout. KLIK blok untuk melihat Pop-up Tooltip rincian tenant.**")
-
-            query_params = st.query_params
-            active_block_m4 = query_params.get("select_m4", None)
-
-            svg_rects_m4 = ""
-            for idx, shape in enumerate(shapes):
-                block_id = f"BLK-{idx+1}"
-                fill, stroke = get_block_styles(block_id, tenant_data)
-                
-                left = shape.get("left", 0)
-                top = shape.get("top", 0)
-                width = shape.get("width", 50) * shape.get("scaleX", 1)
-                height = shape.get("height", 50) * shape.get("scaleY", 1)
-                
-                svg_rects_m4 += f"""
-                <g class="preview-block-group" onclick="inspectBlock('{block_id}')">
-                    <rect x="{left}" y="{top}" width="{width}" height="{height}" 
-                          fill="{fill}" stroke="{stroke}" stroke-width="2" rx="4" class="preview-rect" />
-                    <text x="{left + width/2}" y="{top + height/2}" fill="#ffffff" font-size="13" font-weight="bold" 
-                          text-anchor="middle" dominant-baseline="middle" style="pointer-events: none;">{block_id}</text>
-                </g>
-                """
-
-            bg_img_m4_html = f'<img src="{img_base64}" style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;" />' if show_bg_m4 else ''
-
-            panzoom_m4_html = f"""
-            <script src="https://unpkg.com/@panzoom/panzoom@4.5.1/dist/panzoom.min.js"></script>
-            <div id="container-m4" style="width: 100%; height: 700px; border: 2px solid #e5e7eb; border-radius: 12px; overflow: hidden; background: #f8fafc; cursor: grab;">
-                <div id="panzoom-elem-m4" style="width: {bg_image.width}px; height: {bg_image.height}px; position: relative;">
-                    {bg_img_m4_html}
-                    <svg style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;">
-                        {svg_rects_m4}
-                    </svg>
-                </div>
-            </div>
-            <style>
-                .preview-block-group {{ cursor: pointer; transition: all 0.2s; }}
-                .preview-rect:hover {{ fill: rgba(239, 68, 68, 0.85) !important; stroke: #EF4444 !important; filter: drop-shadow(0 0 8px rgba(239,68,68,0.9)); }}
-            </style>
-            <script>
-                const elem4 = document.getElementById('panzoom-elem-m4');
-                const panzoom4 = Panzoom(elem4, {{ maxScale: 5, minScale: 0.1, contain: 'none' }});
-                elem4.parentElement.addEventListener('wheel', panzoom4.zoomWithWheel);
-
-                function inspectBlock(id) {{
-                    window.top.location.href = window.top.location.pathname + '?select_m4=' + id;
-                }}
-            </script>
-            """
-            
-            components.html(panzoom_m4_html, height=720)
-
-            # TOOLTIP POPUP DETAIL BLOK (ROUNDED RECTANGLE)
-            @st.dialog(f"📊 Tooltip Laporan Detail Spatial: {active_block_m4}")
-            def open_detail_tooltip(block_id):
+            @st.dialog("📊 Tooltip Laporan Detail Spatial")
+            def open_detail_dialog(block_id):
                 detail = tenant_data.get(block_id)
-                
-                st.markdown("""
-                <style>
-                    div[role="dialog"] {
-                        border-radius: 20px !important;
-                        padding: 15px !important;
-                        box-shadow: 0 10px 30px rgba(0,0,0,0.3) !important;
-                    }
-                </style>
-                """, unsafe_allow_html=True)
+                st.markdown(f"### Detail Blok: `{block_id}`")
                 
                 if not detail:
                     st.warning("⚠️ Blok ini belum diisi datanya pada Modul 3.")
                 elif detail.get("status") == "Occupied":
                     st.success(f"🟡 **STATUS: TERISI (OCCUPIED)**")
-                    st.markdown(f"### Brand / Tenant: **{detail.get('nama_tenant')}**")
+                    st.markdown(f"### Brand: **{detail.get('nama_tenant')}**")
                     st.write(f"🏢 **Kategori:** {detail.get('kategori')}")
                     st.write(f"💰 **Realisasi Omzet:** {detail.get('omzet')}")
                     st.write(f"⚡ **Konsumsi Listrik:** {detail.get('listrik')}")
@@ -356,13 +278,51 @@ elif menu == "4. Preview (2D/3D)":
                     st.write(f"📐 **Luas Area:** {detail.get('luas')}")
                     st.write(f"💵 **Target Base Rent:** {detail.get('base_rent')}")
 
-                if st.button("Tutup Pop-up", use_container_width=True):
-                    st.query_params.clear()
-                    st.rerun()
+            # Grid Inspeksi Laporan Blok
+            st.markdown("### 🔍 Klik Blok untuk Membuka Pop-up Laporan Rincian:")
+            cols = st.columns(4)
+            for idx, shape in enumerate(shapes):
+                block_id = f"BLK-{idx+1}"
+                _, _, status_text = get_block_status_info(block_id, tenant_data)
+                
+                with cols[idx % 4]:
+                    if st.button(f"📊 {block_id}\n({status_text})", key=f"btn_m4_{block_id}", use_container_width=True):
+                        open_detail_dialog(block_id)
 
-            if active_block_m4:
-                open_detail_tooltip(active_block_m4)
+            st.markdown("---")
 
+            # Layout Map Preview
+            svg_rects_m4 = ""
+            for idx, shape in enumerate(shapes):
+                block_id = f"BLK-{idx+1}"
+                fill, stroke, _ = get_block_status_info(block_id, tenant_data)
+                left = shape.get("left", 0)
+                top = shape.get("top", 0)
+                width = shape.get("width", 50) * shape.get("scaleX", 1)
+                height = shape.get("height", 50) * shape.get("scaleY", 1)
+                
+                svg_rects_m4 += f"""
+                <rect x="{left}" y="{top}" width="{width}" height="{height}" 
+                      fill="{fill}" stroke="{stroke}" stroke-width="2" rx="4" />
+                <text x="{left + width/2}" y="{top + height/2}" fill="#ffffff" font-size="13" font-weight="bold" 
+                      text-anchor="middle" dominant-baseline="middle">{block_id}</text>
+                """
+
+            bg_img_m4_html = f'<img src="{img_base64}" style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;" />' if show_bg_m4 else ''
+
+            html_preview_m4 = f"""
+            <div style="width: 100%; height: 600px; border: 2px solid #e5e7eb; border-radius: 12px; overflow: auto; background: #f8fafc; position: relative;">
+                <div style="width: {bg_image.width}px; height: {bg_image.height}px; position: relative;">
+                    {bg_img_m4_html}
+                    <svg style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;">
+                        {svg_rects_m4}
+                    </svg>
+                </div>
+            </div>
+            """
+            st.components.v1.html(html_preview_m4, height=620)
+
+        # Mode 3D
         else:
             st.subheader("🧊 Tampilan Modellling 3D Interaktif (Thick Extrusion)")
             st.caption("Tanpa gambar latar belakang denah. Ketebalan ketinggian blok 3D ditambah secara dinamis.")

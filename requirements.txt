@@ -1,9 +1,5 @@
 streamlit
+streamlit-drawable-canvas
+pillow
+pydeck
 pandas
-pdfplumber
-rapidfuzz
-openpyxl
-xlrd
-lxml
-html5lib
-streamlit-pdf-viewer

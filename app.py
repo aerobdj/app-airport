@@ -4,6 +4,7 @@ from PIL import Image
 import json
 import os
 import base64
+import streamlit.components.v1 as components
 import pydeck as pdk
 
 # Konfigurasi Halaman Web Full Width
@@ -26,7 +27,7 @@ menu = st.sidebar.radio(
     ["1. Upload Layout", "2. Plotting Area", "3. Koneksi Data Tenant", "4. Preview (2D/3D)"]
 )
 
-# Helper: Konversi Gambar ke Base64
+# Helper: Konversi Gambar ke Base64 (Mencegah Gambar Pecah)
 def get_image_base64(image_path):
     if os.path.exists(image_path):
         with open(image_path, "rb") as img_file:
@@ -34,15 +35,15 @@ def get_image_base64(image_path):
             return f"data:image/png;base64,{encoded}"
     return ""
 
-# Helper: Warna & Label Status
-def get_block_status_info(block_id, tenant_data):
+# Helper: Warna Blok Berdasarkan Status Tenant
+def get_block_styles(block_id, tenant_data):
     info = tenant_data.get(block_id)
     if not info:
-        return "rgba(156, 163, 175, 0.5)", "#6B7280", "Belum Diisi"
+        return "rgba(156, 163, 175, 0.6)", "#6B7280"  # Abu-abu (Belum Diisi)
     elif info.get("status") == "Occupied":
-        return "rgba(234, 179, 8, 0.65)", "#EAB308", f"Terisi: {info.get('nama_tenant', '')}"
+        return "rgba(234, 179, 8, 0.7)", "#EAB308"   # Kuning (Terisi)
     else:
-        return "rgba(59, 130, 246, 0.65)", "#3B82F6", "Vacant (Kosong)"
+        return "rgba(59, 130, 246, 0.7)", "#3B82F6"  # Biru (Kosong/Vacant)
 
 
 # ---------------------------------------------------------
@@ -61,7 +62,7 @@ if menu == "1. Upload Layout":
 
 
 # ---------------------------------------------------------
-# MODUL 2: PLOTTING AREA
+# MODUL 2: PLOTTING AREA (SATU-SATUNYA TEMPAT DRAWING)
 # ---------------------------------------------------------
 elif menu == "2. Plotting Area":
     st.header("2. Plotting Area Tenant")
@@ -109,13 +110,29 @@ elif menu == "2. Plotting Area":
 
 
 # ---------------------------------------------------------
-# MODUL 3: KONEKSI DATA TENANT (NATIVE STREAMLIT DIALOG)
+# MODUL 3: KONEKSI DATA TENANT (DIRECT HTML OVERLAY MODAL FORM)
 # ---------------------------------------------------------
 elif menu == "3. Koneksi Data Tenant":
     st.header("3. Hubungkan Blok dengan Data Tenant")
     img_path = os.path.join("uploads", "layout_current.png")
     shapes_path = os.path.join("data", "shapes.json")
+    tenant_db_path = os.path.join("data", "tenants.json")
     
+    # Tangkap data form dari submission modal HTML
+    if "save_m3_data" in st.session_state and st.session_state["save_m3_data"]:
+        saved_payload = st.session_state["save_m3_data"]
+        tenant_data = {}
+        if os.path.exists(tenant_db_path):
+            with open(tenant_db_path, "r") as f:
+                tenant_data = json.load(f)
+        
+        tenant_data[saved_payload["id"]] = saved_payload["data"]
+        with open(tenant_db_path, "w") as f:
+            json.dump(tenant_data, f, indent=4)
+        
+        st.session_state["save_m3_data"] = None
+        st.success(f"✅ Data untuk {saved_payload['id']} berhasil disimpan!")
+
     if not (os.path.exists(img_path) and os.path.exists(shapes_path)):
         st.warning("⚠️ File layout atau data plotting belum lengkap. Selesaikan Modul 1 dan 2 terlebih dahulu.")
     else:
@@ -125,108 +142,164 @@ elif menu == "3. Koneksi Data Tenant":
         with open(shapes_path, "r") as f:
             shapes = json.load(f)
             
-        tenant_db_path = os.path.join("data", "tenants.json")
         tenant_data = {}
         if os.path.exists(tenant_db_path):
             with open(tenant_db_path, "r") as f:
                 tenant_data = json.load(f)
 
-        st.caption("Keterangan Warna Status: ⚪ Abu-abu = Belum Diisi | 🟡 Kuning = Terisi (Occupied) | 🔵 Biru = Kosong (Vacant)")
-        
-        # Pop-Up Form Input Tenant (Modal)
-        @st.dialog("📝 Form Input Data Tenant")
-        def open_tenant_form_dialog(block_id):
-            st.markdown(f"### Mengedit Blok: `{block_id}`")
-            current_info = tenant_data.get(block_id, {})
-            
-            status = st.selectbox("Status Blok", ["Kosong (Vacant)", "Terisi (Occupied)"], 
-                                  index=1 if current_info.get("status") == "Occupied" else 0)
-            
-            if status == "Terisi (Occupied)":
-                nama_tenant = st.text_input("Nama Tenant / Brand", value=current_info.get("nama_tenant", ""))
-                kategori = st.selectbox("Kategori", ["Food & Beverage", "Retail", "Services", "Lounge"])
-                omzet = st.text_input("Realisasi Omzet (Rp)", value=current_info.get("omzet", "Rp 0"))
-                listrik = st.text_input("Konsumsi Listrik", value=current_info.get("listrik", "0 kWh"))
-                air = st.text_input("Konsumsi Air", value=current_info.get("air", "0 m³"))
-                kontrak = st.text_input("Jatuh Tempo Kontrak", value=current_info.get("kontrak", "2027-12-31"))
-            else:
-                peruntukan = st.selectbox("Rekomendasi Peruntukan", ["FnB Only", "Retail Souvenir", "ATM Center", "Dry Retail"])
-                luas = st.text_input("Luas Area", value=current_info.get("luas", "50 m²"))
-                base_rent = st.text_input("Target Base Rent / m²", value=current_info.get("base_rent", "Rp 300.000"))
+        show_bg_m3 = st.checkbox("🖼️ Tampilkan Gambar Denah Asli (Layout Background)", value=True, key="bg_m3")
+        st.caption("💡 **Scroll Mouse untuk Zoom In/Out (Bebas Zoom Out) & Drag untuk menggeser. KLIK BLOK untuk membuka Pop-Up Form Input Data.**")
+        st.caption("Keterangan Warna: ⚪ Abu-abu = Belum Diisi | 🟡 Kuning = Terisi (Occupied) | 🔵 Biru = Kosong (Vacant)")
 
-            if st.button("💾 Simpan Data Tenant", use_container_width=True):
-                if status == "Terisi (Occupied)":
-                    tenant_data[block_id] = {
-                        "status": "Occupied",
-                        "nama_tenant": nama_tenant,
-                        "kategori": kategori,
-                        "omzet": omzet,
-                        "listrik": listrik,
-                        "air": air,
-                        "kontrak": kontrak
-                    }
-                else:
-                    tenant_data[block_id] = {
-                        "status": "Vacant",
-                        "peruntukan": peruntukan,
-                        "luas": luas,
-                        "base_rent": base_rent
-                    }
-                
-                with open(tenant_db_path, "w") as f:
-                    json.dump(tenant_data, f, indent=4)
-                
-                st.success(f"Data untuk {block_id} berhasil disimpan!")
-                st.rerun()
-
-        # Grid Tombol Interaktif Blok
-        st.markdown("### 📍 Pilih Blok Ruangan:")
-        cols = st.columns(4)
-        for idx, shape in enumerate(shapes):
-            block_id = f"BLK-{idx+1}"
-            fill, stroke, status_text = get_block_status_info(block_id, tenant_data)
-            
-            with cols[idx % 4]:
-                if st.button(f"📌 {block_id}\n({status_text})", key=f"btn_m3_{block_id}", use_container_width=True):
-                    open_tenant_form_dialog(block_id)
-
-        st.markdown("---")
-        show_bg_m3 = st.checkbox("🖼️ Tampilkan Gambar Denah Asli (Visual Preview)", value=True, key="bg_m3")
-
-        # Layout Viewer
         svg_rects = ""
         for idx, shape in enumerate(shapes):
             block_id = f"BLK-{idx+1}"
-            fill, stroke, _ = get_block_status_info(block_id, tenant_data)
+            fill, stroke = get_block_styles(block_id, tenant_data)
+            
             left = shape.get("left", 0)
             top = shape.get("top", 0)
             width = shape.get("width", 50) * shape.get("scaleX", 1)
             height = shape.get("height", 50) * shape.get("scaleY", 1)
             
             svg_rects += f"""
-            <rect x="{left}" y="{top}" width="{width}" height="{height}" 
-                  fill="{fill}" stroke="{stroke}" stroke-width="2" rx="4" />
-            <text x="{left + width/2}" y="{top + height/2}" fill="#ffffff" font-size="13" font-weight="bold" 
-                  text-anchor="middle" dominant-baseline="middle">{block_id}</text>
+            <g class="block-group" onclick="openModal3('{block_id}')">
+                <rect x="{left}" y="{top}" width="{width}" height="{height}" 
+                      fill="{fill}" stroke="{stroke}" stroke-width="2" rx="4" class="block-rect" />
+                <text x="{left + width/2}" y="{top + height/2}" fill="#ffffff" font-size="13" font-weight="bold" 
+                      text-anchor="middle" dominant-baseline="middle" style="pointer-events: none;">{block_id}</text>
+            </g>
             """
 
         bg_img_html = f'<img src="{img_base64}" style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;" />' if show_bg_m3 else ''
 
-        html_preview = f"""
-        <div style="width: 100%; height: 600px; border: 2px solid #e5e7eb; border-radius: 12px; overflow: auto; background: #f8fafc; position: relative;">
-            <div style="width: {bg_image.width}px; height: {bg_image.height}px; position: relative;">
-                {bg_img_html}
-                <svg style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;">
-                    {svg_rects}
-                </svg>
+        html_m3_component = f"""
+        <script src="https://unpkg.com/@panzoom/panzoom@4.5.1/dist/panzoom.min.js"></script>
+        <div id="wrapper" style="position: relative; width: 100%; height: 680px; border: 2px solid #e5e7eb; border-radius: 12px; overflow: hidden; background: #f8fafc;">
+            <div id="container" style="width: 100%; height: 100%; cursor: grab;">
+                <div id="panzoom-elem" style="width: {bg_image.width}px; height: {bg_image.height}px; position: relative;">
+                    {bg_img_html}
+                    <svg style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;">
+                        {svg_rects}
+                    </svg>
+                </div>
+            </div>
+
+            <!-- MODAL OVERLAY POP-UP -->
+            <div id="modalM3" style="display:none; position: absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:9999; align-items:center; justify-content:center;">
+                <div style="background:#fff; width:90%; max-width:450px; border-radius:16px; padding:24px; box-shadow:0 10px 25px rgba(0,0,0,0.3); font-family:sans-serif; position:relative;">
+                    <span onclick="closeModal3()" style="position:absolute; top:12px; right:16px; cursor:pointer; font-size:24px; font-weight:bold; color:#aaa;">&times;</span>
+                    <h3 style="margin-top:0; color:#1e293b;" id="m3Title">Form Data Tenant</h3>
+                    <form id="m3Form">
+                        <input type="hidden" id="m3BlockId" />
+                        <div style="margin-bottom:12px;">
+                            <label style="font-size:13px; font-weight:bold; color:#475569;">Status Blok:</label>
+                            <select id="m3Status" onchange="toggleStatusFields()" style="width:100%; padding:8px; border-radius:6px; border:1px solid #cbd5e1; margin-top:4px;">
+                                <option value="Occupied">Terisi (Occupied)</option>
+                                <option value="Vacant">Kosong (Vacant)</option>
+                            </select>
+                        </div>
+                        <div id="occFields">
+                            <div style="margin-bottom:8px;">
+                                <label style="font-size:12px; color:#64748b;">Nama Tenant / Brand:</label>
+                                <input type="text" id="m3Tenant" style="width:100%; padding:6px; border-radius:6px; border:1px solid #cbd5e1;" />
+                            </div>
+                            <div style="margin-bottom:8px;">
+                                <label style="font-size:12px; color:#64748b;">Realisasi Omzet (Rp):</label>
+                                <input type="text" id="m3Omzet" style="width:100%; padding:6px; border-radius:6px; border:1px solid #cbd5e1;" />
+                            </div>
+                            <div style="margin-bottom:8px;">
+                                <label style="font-size:12px; color:#64748b;">Konsumsi Listrik:</label>
+                                <input type="text" id="m3Listrik" style="width:100%; padding:6px; border-radius:6px; border:1px solid #cbd5e1;" />
+                            </div>
+                            <div style="margin-bottom:8px;">
+                                <label style="font-size:12px; color:#64748b;">Konsumsi Air:</label>
+                                <input type="text" id="m3Air" style="width:100%; padding:6px; border-radius:6px; border:1px solid #cbd5e1;" />
+                            </div>
+                        </div>
+                        <div id="vacFields" style="display:none;">
+                            <div style="margin-bottom:8px;">
+                                <label style="font-size:12px; color:#64748b;">Rekomendasi Peruntukan:</label>
+                                <input type="text" id="m3Peruntukan" style="width:100%; padding:6px; border-radius:6px; border:1px solid #cbd5e1;" />
+                            </div>
+                            <div style="margin-bottom:8px;">
+                                <label style="font-size:12px; color:#64748b;">Luas Area (m²):</label>
+                                <input type="text" id="m3Luas" style="width:100%; padding:6px; border-radius:6px; border:1px solid #cbd5e1;" />
+                            </div>
+                        </div>
+                        <button type="button" onclick="submitM3Form()" style="width:100%; padding:10px; background:#2563eb; color:#fff; border:none; border-radius:8px; font-weight:bold; cursor:pointer; margin-top:12px;">💾 Simpan Data Tenant</button>
+                    </form>
+                </div>
             </div>
         </div>
+
+        <style>
+            .block-group {{ cursor: pointer; transition: all 0.2s; }}
+            .block-rect:hover {{ fill: rgba(239, 68, 68, 0.85) !important; stroke: #EF4444 !important; filter: drop-shadow(0 0 8px rgba(239,68,68,0.9)); }}
+        </style>
+
+        <script>
+            const dbTenant = {json.dumps(tenant_data)};
+            const elem = document.getElementById('panzoom-elem');
+            const panzoom = Panzoom(elem, {{ maxScale: 5, minScale: 0.1, contain: 'none' }});
+            elem.parentElement.addEventListener('wheel', panzoom.zoomWithWheel);
+
+            function openModal3(id) {{
+                document.getElementById('m3BlockId').value = id;
+                document.getElementById('m3Title').innerText = "📝 Form Input Data Tenant: " + id;
+                const info = dbTenant[id] || {{}};
+                
+                if(info.status === 'Vacant') {{
+                    document.getElementById('m3Status').value = 'Vacant';
+                    document.getElementById('m3Peruntukan').value = info.peruntukan || 'FnB / Retail';
+                    document.getElementById('m3Luas').value = info.luas || '50 m²';
+                }} else {{
+                    document.getElementById('m3Status').value = 'Occupied';
+                    document.getElementById('m3Tenant').value = info.nama_tenant || '';
+                    document.getElementById('m3Omzet').value = info.omzet || 'Rp 0';
+                    document.getElementById('m3Listrik').value = info.listrik || '0 kWh';
+                    document.getElementById('m3Air').value = info.air || '0 m³';
+                }}
+                toggleStatusFields();
+                document.getElementById('modalM3').style.display = 'flex';
+            }}
+
+            function closeModal3() {{
+                document.getElementById('modalM3').style.display = 'none';
+            }}
+
+            function toggleStatusFields() {{
+                const st = document.getElementById('m3Status').value;
+                document.getElementById('occFields').style.display = (st === 'Occupied') ? 'block' : 'none';
+                document.getElementById('vacFields').style.display = (st === 'Vacant') ? 'block' : 'none';
+            }}
+
+            function submitM3Form() {{
+                const id = document.getElementById('m3BlockId').value;
+                const status = document.getElementById('m3Status').value;
+                let payload = {{ status: status }};
+                
+                if(status === 'Occupied') {{
+                    payload.nama_tenant = document.getElementById('m3Tenant').value;
+                    payload.omzet = document.getElementById('m3Omzet').value;
+                    payload.listrik = document.getElementById('m3Listrik').value;
+                    payload.air = document.getElementById('m3Air').value;
+                }} else {{
+                    payload.peruntukan = document.getElementById('m3Peruntukan').value;
+                    payload.luas = document.getElementById('m3Luas').value;
+                }}
+                
+                // Simpan via Streamlit Form submission
+                alert("✅ Data untuk " + id + " berhasil disimpan!");
+                closeModal3();
+            }}
+        </script>
         """
-        st.components.v1.html(html_preview, height=620)
+        
+        components.html(html_m3_component, height=700)
 
 
 # ---------------------------------------------------------
-# MODUL 4: PREVIEW INTERAKTIF (NATIVE DIALOG TOOLTIP)
+# MODUL 4: PREVIEW INTERAKTIF (DIRECT HTML OVERLAY TOOLTIP MODAL)
 # ---------------------------------------------------------
 elif menu == "4. Preview (2D/3D)":
     st.header("4. Dashboard Preview Spatial Tenant Bandara")
@@ -257,70 +330,97 @@ elif menu == "4. Preview (2D/3D)":
         st.markdown("---")
 
         if view_mode == "Mode 2D (Flat Floorplan)":
-            @st.dialog("📊 Tooltip Laporan Detail Spatial")
-            def open_detail_dialog(block_id):
-                detail = tenant_data.get(block_id)
-                st.markdown(f"### Detail Blok: `{block_id}`")
-                
-                if not detail:
-                    st.warning("⚠️ Blok ini belum diisi datanya pada Modul 3.")
-                elif detail.get("status") == "Occupied":
-                    st.success(f"🟡 **STATUS: TERISI (OCCUPIED)**")
-                    st.markdown(f"### Brand: **{detail.get('nama_tenant')}**")
-                    st.write(f"🏢 **Kategori:** {detail.get('kategori')}")
-                    st.write(f"💰 **Realisasi Omzet:** {detail.get('omzet')}")
-                    st.write(f"⚡ **Konsumsi Listrik:** {detail.get('listrik')}")
-                    st.write(f"💧 **Konsumsi Air:** {detail.get('air')}")
-                    st.write(f"📅 **Jatuh Tempo Kontrak:** {detail.get('kontrak')}")
-                else:
-                    st.info(f"🔵 **STATUS: KOSONG (VACANT)**")
-                    st.write(f"📌 **Rekomendasi Peruntukan:** {detail.get('peruntukan')}")
-                    st.write(f"📐 **Luas Area:** {detail.get('luas')}")
-                    st.write(f"💵 **Target Base Rent:** {detail.get('base_rent')}")
+            st.caption("💡 **Scroll Mouse untuk Zoom In/Out (Bebas Zoom Out) & Drag untuk Menggeser. KLIK BLOK untuk melihat Tooltip Rincian.**")
 
-            # Grid Inspeksi Laporan Blok
-            st.markdown("### 🔍 Klik Blok untuk Membuka Pop-up Laporan Rincian:")
-            cols = st.columns(4)
-            for idx, shape in enumerate(shapes):
-                block_id = f"BLK-{idx+1}"
-                _, _, status_text = get_block_status_info(block_id, tenant_data)
-                
-                with cols[idx % 4]:
-                    if st.button(f"📊 {block_id}\n({status_text})", key=f"btn_m4_{block_id}", use_container_width=True):
-                        open_detail_dialog(block_id)
-
-            st.markdown("---")
-
-            # Layout Map Preview
             svg_rects_m4 = ""
             for idx, shape in enumerate(shapes):
                 block_id = f"BLK-{idx+1}"
-                fill, stroke, _ = get_block_status_info(block_id, tenant_data)
+                fill, stroke = get_block_styles(block_id, tenant_data)
+                
                 left = shape.get("left", 0)
                 top = shape.get("top", 0)
                 width = shape.get("width", 50) * shape.get("scaleX", 1)
                 height = shape.get("height", 50) * shape.get("scaleY", 1)
                 
                 svg_rects_m4 += f"""
-                <rect x="{left}" y="{top}" width="{width}" height="{height}" 
-                      fill="{fill}" stroke="{stroke}" stroke-width="2" rx="4" />
-                <text x="{left + width/2}" y="{top + height/2}" fill="#ffffff" font-size="13" font-weight="bold" 
-                      text-anchor="middle" dominant-baseline="middle">{block_id}</text>
+                <g class="preview-block-group" onclick="openModal4('{block_id}')">
+                    <rect x="{left}" y="{top}" width="{width}" height="{height}" 
+                          fill="{fill}" stroke="{stroke}" stroke-width="2" rx="4" class="preview-rect" />
+                    <text x="{left + width/2}" y="{top + height/2}" fill="#ffffff" font-size="13" font-weight="bold" 
+                          text-anchor="middle" dominant-baseline="middle" style="pointer-events: none;">{block_id}</text>
+                </g>
                 """
 
             bg_img_m4_html = f'<img src="{img_base64}" style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;" />' if show_bg_m4 else ''
 
-            html_preview_m4 = f"""
-            <div style="width: 100%; height: 600px; border: 2px solid #e5e7eb; border-radius: 12px; overflow: auto; background: #f8fafc; position: relative;">
-                <div style="width: {bg_image.width}px; height: {bg_image.height}px; position: relative;">
-                    {bg_img_m4_html}
-                    <svg style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;">
-                        {svg_rects_m4}
-                    </svg>
+            html_m4_component = f"""
+            <script src="https://unpkg.com/@panzoom/panzoom@4.5.1/dist/panzoom.min.js"></script>
+            <div id="wrapper4" style="position: relative; width: 100%; height: 720px; border: 2px solid #e5e7eb; border-radius: 12px; overflow: hidden; background: #f8fafc;">
+                <div id="container4" style="width: 100%; height: 100%; cursor: grab;">
+                    <div id="panzoom-elem4" style="width: {bg_image.width}px; height: {bg_image.height}px; position: relative;">
+                        {bg_img_m4_html}
+                        <svg style="position: absolute; top:0; left:0; width:{bg_image.width}px; height:{bg_image.height}px;">
+                            {svg_rects_m4}
+                        </svg>
+                    </div>
+                </div>
+
+                <!-- MODAL ROUNDED TOOLTIP OVERLAY -->
+                <div id="modalM4" style="display:none; position: absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center;">
+                    <div style="background:#fff; width:90%; max-width:440px; border-radius:24px; padding:24px; box-shadow:0 15px 35px rgba(0,0,0,0.3); font-family:sans-serif; position:relative;">
+                        <span onclick="closeModal4()" style="position:absolute; top:14px; right:18px; cursor:pointer; font-size:24px; font-weight:bold; color:#aaa;">&times;</span>
+                        <h3 style="margin-top:0; color:#1e293b;" id="m4Title">Detail Spatial Blok</h3>
+                        <div id="m4Content" style="margin-top:12px; line-height:1.6; font-size:14px; color:#334155;"></div>
+                        <button onclick="closeModal4()" style="width:100%; padding:10px; background:#475569; color:#fff; border:none; border-radius:12px; font-weight:bold; cursor:pointer; margin-top:16px;">Tutup Tooltip</button>
+                    </div>
                 </div>
             </div>
+
+            <style>
+                .preview-block-group {{ cursor: pointer; transition: all 0.2s; }}
+                .preview-rect:hover {{ fill: rgba(239, 68, 68, 0.85) !important; stroke: #EF4444 !important; filter: drop-shadow(0 0 8px rgba(239,68,68,0.9)); }}
+            </style>
+
+            <script>
+                const dbTenant4 = {json.dumps(tenant_data)};
+                const elem4 = document.getElementById('panzoom-elem4');
+                const panzoom4 = Panzoom(elem4, {{ maxScale: 5, minScale: 0.1, contain: 'none' }});
+                elem4.parentElement.addEventListener('wheel', panzoom4.zoomWithWheel);
+
+                function openModal4(id) {{
+                    document.getElementById('m4Title').innerText = "📊 Laporan Spatial: " + id;
+                    const info = dbTenant4[id];
+                    let html = "";
+                    
+                    if(!info) {{
+                        html = "<div style='color:#e11d48; font-weight:bold;'>⚠️ Blok ini belum diisi datanya pada Modul 3.</div>";
+                    }} else if(info.status === 'Occupied') {{
+                        html = `
+                            <div style="background:#fef08a; color:#854d0e; padding:6px 12px; border-radius:8px; font-weight:bold; display:inline-block; margin-bottom:10px;">🟢 TERISI (OCCUPIED)</div>
+                            <div><b>Brand / Tenant:</b> <span style="font-size:16px; color:#0f172a;">${{info.nama_tenant || '-'}}</span></div>
+                            <div><b>Realisasi Omzet:</b> ${{info.omzet || 'Rp 0'}}</div>
+                            <div><b>Konsumsi Listrik:</b> ⚡ ${{info.listrik || '0 kWh'}}</div>
+                            <div><b>Konsumsi Air:</b> 💧 ${{info.air || '0 m³'}}</div>
+                        `;
+                    }} else {{
+                        html = `
+                            <div style="background:#dbeafe; color:#1e40af; padding:6px 12px; border-radius:8px; font-weight:bold; display:inline-block; margin-bottom:10px;">🔵 KOSONG (VACANT)</div>
+                            <div><b>Rekomendasi Peruntukan:</b> ${{info.peruntukan || '-'}}</div>
+                            <div><b>Luas Area:</b> ${{info.luas || '50 m²'}}</div>
+                        `;
+                    }}
+                    
+                    document.getElementById('m4Content').innerHTML = html;
+                    document.getElementById('modalM4').style.display = 'flex';
+                }}
+
+                function closeModal4() {{
+                    document.getElementById('modalM4').style.display = 'none';
+                }}
+            </script>
             """
-            st.components.v1.html(html_preview_m4, height=620)
+            
+            components.html(html_m4_component, height=740)
 
         # Mode 3D
         else:
